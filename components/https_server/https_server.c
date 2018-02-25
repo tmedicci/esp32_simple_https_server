@@ -221,6 +221,7 @@ static void header_value_done(http_context_t ctx)
 
 static int http_url_cb(http_parser* parser, const char *at, size_t length)
 {
+	ESP_LOGV(TAG, "Called http_url_cb!");
     http_context_t ctx = (http_context_t) parser->data;
     return append_parse_buffer(ctx, at, length);
 }
@@ -239,6 +240,7 @@ static bool invoke_handler(http_context_t ctx, int event)
 
 static int http_headers_done_cb(http_parser* parser)
 {
+	ESP_LOGV(TAG, "Called http_headers_done_cb!");
     http_context_t ctx = (http_context_t) parser->data;
     if (ctx->state == HTTP_PARSING_HEADER_VALUE) {
         header_value_done(ctx);
@@ -350,6 +352,7 @@ static void uri_done(http_context_t ctx)
 
 static int http_header_name_cb(http_parser* parser, const char *at, size_t length)
 {
+	ESP_LOGV(TAG, "Called http_header_name_cb!");
     ESP_LOGV(TAG, "%s", __func__);
     http_context_t ctx = (http_context_t) parser->data;
     if (ctx->state == HTTP_PARSING_URI) {
@@ -364,6 +367,8 @@ static int http_header_name_cb(http_parser* parser, const char *at, size_t lengt
 
 static int http_header_value_cb(http_parser* parser, const char *at, size_t length)
 {
+	ESP_LOGV(TAG, "Called http_header_value_cb!");
+
     ESP_LOGV(TAG, "%s", __func__);
     http_context_t ctx = (http_context_t) parser->data;
     if (ctx->state == HTTP_PARSING_HEADER_NAME) {
@@ -375,6 +380,8 @@ static int http_header_value_cb(http_parser* parser, const char *at, size_t leng
 
 static int http_body_cb(http_parser* parser, const char *at, size_t length)
 {
+	ESP_LOGV(TAG, "Called http_body_cb!");
+
     ESP_LOGV(TAG, "%s", __func__);
     http_context_t ctx = (http_context_t) parser->data;
     ctx->data_ptr = at;
@@ -387,6 +394,7 @@ static int http_body_cb(http_parser* parser, const char *at, size_t length)
 
 static int http_message_done_cb(http_parser* parser)
 {
+	ESP_LOGV(TAG, "Called http_message_done_cb!");
     ESP_LOGV(TAG, "%s", __func__);
     http_context_t ctx = (http_context_t) parser->data;
     ctx->state = HTTP_REQUEST_DONE;
@@ -924,7 +932,13 @@ esp_err_t http_server_stop(http_server_t server)
     free(server);
     return ESP_OK;
 }
+#ifdef HTTPS_SERVER
+static void cb_GET_method(http_context_t http_ctx, void* ctx)
+{
+    ESP_LOGI(TAG, "Respondeu a callback!");
+}
 
+#else
 static void cb_GET_method(http_context_t http_ctx, void* ctx)
 {
     size_t response_size = strlen(index_html);
@@ -933,6 +947,7 @@ static void cb_GET_method(http_context_t http_ctx, void* ctx)
     http_response_write(http_ctx, &http_index_html);
     http_response_end(http_ctx);
 }
+#endif
 
 esp_err_t simple_GET_method_example(void)
 {

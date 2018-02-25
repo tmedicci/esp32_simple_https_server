@@ -70,6 +70,7 @@ const static char *TAG_mbedTLS = "mbedTLS_example";
     "<h2>mbed TLS Test Server</h2>\r\n" \
     "<p>Successful connection using: %s</p>\r\n"
 
+
 static void mbedtls_example_task(void *p)
 {
     int ret, len;
@@ -250,22 +251,31 @@ reset:
 #ifdef HTTPS_SERVER
 	http_server_t server;
 	http_server_options_t http_options = HTTP_SERVER_OPTIONS_DEFAULT();
+	esp_err_t res;
 
 	server = calloc(1, sizeof(*server));
 	if (server == NULL) {
-		return ESP_ERR_NO_MEM;
+		//return ESP_ERR_NO_MEM;
 	}
 
 	server->port = http_options.port;
 	server->start_done = xEventGroupCreate();
 	if (server->start_done == NULL) {
 		free(server);
-		return ESP_ERR_NO_MEM;
+		//return ESP_ERR_NO_MEM;
+	}
+
+	ESP_LOGI(TAG_mbedTLS, "Registrou Handler!");
+	res = http_register_handler(server, "/", HTTP_GET, HTTP_HANDLE_RESPONSE, &cb_GET_method, NULL);
+	if (res != ESP_OK) {
+		ESP_LOGI(TAG_mbedTLS, "Falha ao criar Handlers!");
+		//return res;
 	}
 
 	ESP_LOGI(TAG_mbedTLS, "Inicializando http_handle_connection");
-
     http_handle_connection(server, &ssl);
+
+
 #else
 	ESP_LOGI(TAG_mbedTLS, "  < Read from client:" );
 	do
