@@ -24,6 +24,7 @@
 
 #include "mbedtls_server_example.h"
 
+
 #include <string.h>
 
 #include "mbedtls/platform.h"
@@ -52,6 +53,9 @@
 #include "lwip/sockets.h"
 #include "lwip/netdb.h"
 
+#include "https_server.h"
+#include "https_server.c"
+
 static EventGroupHandle_t wifi_event_group;
 
 /* The event group allows multiple bits for each event,
@@ -59,7 +63,7 @@ static EventGroupHandle_t wifi_event_group;
    to the AP with an IP? */
 const static int CONNECTED_BIT = BIT0;
 
-const static char *TAG = "mbedTLS_example";
+const static char *TAG_mbedTLS = "mbedTLS_example";
 
 #define HTTP_RESPONSE \
     "HTTP/1.0 200 OK\r\nContent-Type: text/html\r\n\r\n" \
@@ -93,9 +97,9 @@ static void mbedtls_example_task(void *p)
 
     mbedtls_net_init( &listen_fd );
     mbedtls_net_init( &client_fd );
-    ESP_LOGI(TAG, "SSL server context create ......");
+    ESP_LOGI(TAG_mbedTLS, "SSL server context create ......");
     mbedtls_ssl_init( &ssl );
-    ESP_LOGI(TAG, "OK");
+    ESP_LOGI(TAG_mbedTLS, "OK");
     mbedtls_ssl_config_init( &conf );
 #if defined(MBEDTLS_SSL_CACHE_C)
     mbedtls_ssl_cache_init( &cache );
@@ -115,55 +119,55 @@ static void mbedtls_example_task(void *p)
 	 * Instead, you may want to use mbedtls_x509_crt_parse_file() to read the
 	 * server and CA certificates, as well as mbedtls_pk_parse_keyfile().
 	 */
-	ESP_LOGI(TAG, "SSL server context set own certification......");
-	ESP_LOGI(TAG, "Parsing test srv_crt......");
+	ESP_LOGI(TAG_mbedTLS, "SSL server context set own certification......");
+	ESP_LOGI(TAG_mbedTLS, "Parsing test srv_crt......");
 	ret = mbedtls_x509_crt_parse( &srvcert, (const unsigned char *) cacert_pem_start,
 						cacert_pem_bytes );
 	if( ret != 0 )
 	{
-		ESP_LOGI(TAG, " failed\n  !  mbedtls_x509_crt_parse returned %d\n\n", ret );
+		ESP_LOGI(TAG_mbedTLS, " failed\n  !  mbedtls_x509_crt_parse returned %d\n\n", ret );
 		goto exit;
 	}
-    ESP_LOGI(TAG, "OK");
+    ESP_LOGI(TAG_mbedTLS, "OK");
 
-	ESP_LOGI(TAG, "SSL server context set private key......");
+	ESP_LOGI(TAG_mbedTLS, "SSL server context set private key......");
     ret =  mbedtls_pk_parse_key( &pkey, (const unsigned char *) prvtkey_pem_start,
     						prvtkey_pem_bytes, NULL, 0 );
 	if( ret != 0 )
 	{
-		ESP_LOGI(TAG, " failed\n  !  mbedtls_pk_parse_key returned %d\n\n", ret );
+		ESP_LOGI(TAG_mbedTLS, " failed\n  !  mbedtls_pk_parse_key returned %d\n\n", ret );
 		goto exit;
 	}
-    ESP_LOGI(TAG, "OK");
+    ESP_LOGI(TAG_mbedTLS, "OK");
 
     /*
 	 * 2. Setup the listening TCP socket
 	 */
-	ESP_LOGI(TAG, "SSL server socket bind at localhost:443 ......");
+	ESP_LOGI(TAG_mbedTLS, "SSL server socket bind at localhost:443 ......");
 	if( ( ret = mbedtls_net_bind( &listen_fd, NULL, "443", MBEDTLS_NET_PROTO_TCP ) ) != 0 )
 	{
-		ESP_LOGI(TAG, " failed\n  ! mbedtls_net_bind returned %d\n\n", ret );
+		ESP_LOGI(TAG_mbedTLS, " failed\n  ! mbedtls_net_bind returned %d\n\n", ret );
 		goto exit;
 	}
-	ESP_LOGI(TAG, "OK");
+	ESP_LOGI(TAG_mbedTLS, "OK");
 
 	/*
 	 * 3. Seed the RNG
 	 */
-	ESP_LOGI(TAG, "  . Seeding the random number generator..." );
+	ESP_LOGI(TAG_mbedTLS, "  . Seeding the random number generator..." );
 	if( ( ret = mbedtls_ctr_drbg_seed( &ctr_drbg, mbedtls_entropy_func, &entropy,
-							   (const unsigned char *) TAG,
-							   strlen( TAG ) ) ) != 0 )
+							   (const unsigned char *) TAG_mbedTLS,
+							   strlen( TAG_mbedTLS ) ) ) != 0 )
 	{
-		ESP_LOGI(TAG, " failed\n  ! mbedtls_ctr_drbg_seed returned %d\n", ret );
+		ESP_LOGI(TAG_mbedTLS, " failed\n  ! mbedtls_ctr_drbg_seed returned %d\n", ret );
 		goto exit;
 	}
-	ESP_LOGI(TAG, "OK");
+	ESP_LOGI(TAG_mbedTLS, "OK");
 
     /*
      * 4. Setup stuff
      */
-	ESP_LOGI(TAG, "  . Setting up the SSL data...." );
+	ESP_LOGI(TAG_mbedTLS, "  . Setting up the SSL data...." );
 #ifdef CONFIG_MBEDTLS_DEBUG
     mbedtls_esp_enable_debug_log(&conf, 4);
 #endif
@@ -172,7 +176,7 @@ static void mbedtls_example_task(void *p)
                     MBEDTLS_SSL_TRANSPORT_STREAM,
                     MBEDTLS_SSL_PRESET_DEFAULT ) ) != 0 )
     {
-    	ESP_LOGI(TAG, " failed\n  ! mbedtls_ssl_config_defaults returned %d\n\n", ret );
+    	ESP_LOGI(TAG_mbedTLS, " failed\n  ! mbedtls_ssl_config_defaults returned %d\n\n", ret );
         goto exit;
     }
 
@@ -187,17 +191,17 @@ static void mbedtls_example_task(void *p)
     mbedtls_ssl_conf_ca_chain( &conf, srvcert.next, NULL );
     if( ( ret = mbedtls_ssl_conf_own_cert( &conf, &srvcert, &pkey ) ) != 0 )
     {
-    	ESP_LOGI(TAG, " failed\n  ! mbedtls_ssl_conf_own_cert returned %d\n\n", ret );
+    	ESP_LOGI(TAG_mbedTLS, " failed\n  ! mbedtls_ssl_conf_own_cert returned %d\n\n", ret );
         goto exit;
     }
 
     if( ( ret = mbedtls_ssl_setup( &ssl, &conf ) ) != 0 )
     {
-    	ESP_LOGI(TAG, " failed\n  ! mbedtls_ssl_setup returned %d\n\n", ret );
+    	ESP_LOGI(TAG_mbedTLS, " failed\n  ! mbedtls_ssl_setup returned %d\n\n", ret );
         goto exit;
     }
 
-	ESP_LOGI(TAG, "OK");
+	ESP_LOGI(TAG_mbedTLS, "OK");
 
 reset:
 #ifdef MBEDTLS_ERROR_C
@@ -205,7 +209,7 @@ reset:
 	{
 		char error_buf[100];
 		mbedtls_strerror( ret, error_buf, 100 );
-		ESP_LOGI(TAG, "Last error was: %d - %s\n\n", ret, error_buf );
+		ESP_LOGI(TAG_mbedTLS, "Last error was: %d - %s\n\n", ret, error_buf );
 	}
 #endif
 
@@ -216,34 +220,54 @@ reset:
 	/*
 	 * 3. Wait until a client connects
 	 */
-	ESP_LOGI(TAG, "  . Waiting for a remote connection ..." );
+	ESP_LOGI(TAG_mbedTLS, "  . Waiting for a remote connection ..." );
 	if( ( ret = mbedtls_net_accept( &listen_fd, &client_fd,
 									NULL, 0, NULL ) ) != 0 )
 	{
-		ESP_LOGI(TAG, " failed\n  ! mbedtls_net_accept returned %d\n\n", ret );
+		ESP_LOGI(TAG_mbedTLS, " failed\n  ! mbedtls_net_accept returned %d\n\n", ret );
 		goto exit;
 	}
 	mbedtls_ssl_set_bio( &ssl, &client_fd, mbedtls_net_send, mbedtls_net_recv, NULL );
-	ESP_LOGI(TAG, "OK");
+	ESP_LOGI(TAG_mbedTLS, "OK");
 
 	/*
 	 * 5. Handshake
 	 */
-	ESP_LOGI(TAG, "  . Performing the SSL/TLS handshake..." );
+	ESP_LOGI(TAG_mbedTLS, "  . Performing the SSL/TLS handshake..." );
 	while( ( ret = mbedtls_ssl_handshake( &ssl ) ) != 0 )
 	{
 		if( ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE )
 		{
-			ESP_LOGI(TAG, " failed\n  ! mbedtls_ssl_handshake returned %d\n\n", ret );
+			ESP_LOGI(TAG_mbedTLS, " failed\n  ! mbedtls_ssl_handshake returned %d\n\n", ret );
 			goto reset;
 		}
 	}
-	ESP_LOGI(TAG, "OK");
+	ESP_LOGI(TAG_mbedTLS, "OK");
 
 	/*
 	 * 6. Read the HTTP Request
 	 */
-	ESP_LOGI(TAG, "  < Read from client:" );
+#ifdef HTTPS_SERVER
+	http_server_t server;
+	http_server_options_t http_options = HTTP_SERVER_OPTIONS_DEFAULT();
+
+	server = calloc(1, sizeof(*server));
+	if (server == NULL) {
+		return ESP_ERR_NO_MEM;
+	}
+
+	server->port = http_options.port;
+	server->start_done = xEventGroupCreate();
+	if (server->start_done == NULL) {
+		free(server);
+		return ESP_ERR_NO_MEM;
+	}
+
+	ESP_LOGI(TAG_mbedTLS, "Inicializando http_handle_connection");
+
+    http_handle_connection(server, &ssl);
+#else
+	ESP_LOGI(TAG_mbedTLS, "  < Read from client:" );
 	do
 	{
 		len = sizeof( buf ) - 1;
@@ -258,15 +282,15 @@ reset:
 			switch( ret )
 			{
 				case MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY:
-					ESP_LOGI(TAG, " connection was closed gracefully\n" );
+					ESP_LOGI(TAG_mbedTLS, " connection was closed gracefully\n" );
 					break;
 
 				case MBEDTLS_ERR_NET_CONN_RESET:
-					ESP_LOGI(TAG, " connection was reset by peer\n" );
+					ESP_LOGI(TAG_mbedTLS, " connection was reset by peer\n" );
 					break;
 
 				default:
-					ESP_LOGI(TAG, " mbedtls_ssl_read returned -0x%x\n", -ret );
+					ESP_LOGI(TAG_mbedTLS, " mbedtls_ssl_read returned -0x%x\n", -ret );
 					break;
 			}
 
@@ -274,17 +298,17 @@ reset:
 		}
 
 		len = ret;
-		ESP_LOGI(TAG, " %d bytes read\n\n%s", len, (char *) buf );
+		ESP_LOGI(TAG_mbedTLS, " %d bytes read\n\n%s", len, (char *) buf );
 
 		if( ret > 0 )
 			break;
 	}
 	while( 1 );
-
+#endif
 	/*
 	 * 7. Write the 200 Response
 	 */
-	ESP_LOGI(TAG, "  > Write to client:" );
+	ESP_LOGI(TAG_mbedTLS, "  > Write to client:" );
 	len = snprintf( (char *) buf, sizeof(HTTP_RESPONSE) +
 					sizeof(mbedtls_ssl_get_ciphersuite( &ssl )) ,HTTP_RESPONSE,
 					mbedtls_ssl_get_ciphersuite( &ssl ) );
@@ -293,32 +317,32 @@ reset:
 	{
 		if( ret == MBEDTLS_ERR_NET_CONN_RESET )
 		{
-			ESP_LOGI(TAG, " failed\n  ! peer closed the connection\n\n" );
+			ESP_LOGI(TAG_mbedTLS, " failed\n  ! peer closed the connection\n\n" );
 			goto reset;
 		}
 
 		if( ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE )
 		{
-			ESP_LOGI(TAG, " failed\n  ! mbedtls_ssl_write returned %d\n\n", ret );
+			ESP_LOGI(TAG_mbedTLS, " failed\n  ! mbedtls_ssl_write returned %d\n\n", ret );
 			goto exit;
 		}
 	}
 
 	len = ret;
-	ESP_LOGI(TAG, " %d bytes written\n\n%s\n", len, (char *) buf );
+	ESP_LOGI(TAG_mbedTLS, " %d bytes written\n\n%s\n", len, (char *) buf );
 
-	ESP_LOGI(TAG, "Closing the connection..." );
+	ESP_LOGI(TAG_mbedTLS, "Closing the connection..." );
 
 	while( ( ret = mbedtls_ssl_close_notify( &ssl ) ) < 0 )
 	{
 		if( ret != MBEDTLS_ERR_SSL_WANT_READ &&
 			ret != MBEDTLS_ERR_SSL_WANT_WRITE )
 		{
-			ESP_LOGI(TAG, " failed\n  ! mbedtls_ssl_close_notify returned %d\n\n", ret );
+			ESP_LOGI(TAG_mbedTLS, " failed\n  ! mbedtls_ssl_close_notify returned %d\n\n", ret );
 			goto reset;
 		}
 	}
-	ESP_LOGI(TAG, "OK");
+	ESP_LOGI(TAG_mbedTLS, "OK");
 
 	ret = 0;
 	goto reset;
@@ -330,7 +354,7 @@ exit:
 	{
 		char error_buf[100];
 		mbedtls_strerror( ret, error_buf, 100 );
-		ESP_LOGI(TAG,"Last error was: %d - %s\n\n", ret, error_buf );
+		ESP_LOGI(TAG_mbedTLS,"Last error was: %d - %s\n\n", ret, error_buf );
 	}
 #endif
 
@@ -347,7 +371,7 @@ exit:
 	mbedtls_ctr_drbg_free( &ctr_drbg );
 	mbedtls_entropy_free( &entropy );
 
-    ESP_LOGI(TAG, "Closing Task");
+    ESP_LOGI(TAG_mbedTLS, "Closing Task");
 	vTaskDelete(NULL);
 	return ;
 } 
@@ -365,7 +389,7 @@ static void mbedtls_server_init(void)
                       &openssl_handle); 
 
     if (ret != pdPASS)  {
-        ESP_LOGI(TAG, "create task %s failed", MBEDTLS_EXAMPLE_TASK_NAME);
+        ESP_LOGI(TAG_mbedTLS, "create task %s failed", MBEDTLS_EXAMPLE_TASK_NAME);
     }
 }
 
@@ -407,7 +431,7 @@ static void wifi_conn_init(void)
     };
     ESP_ERROR_CHECK( esp_wifi_set_mode(WIFI_MODE_STA) );
     ESP_ERROR_CHECK( esp_wifi_set_config(ESP_IF_WIFI_STA, &wifi_config) );
-    ESP_LOGI(TAG, "start the WIFI SSID:[%s] password:[%s]\n", EXAMPLE_WIFI_SSID, EXAMPLE_WIFI_PASS);
+    ESP_LOGI(TAG_mbedTLS, "start the WIFI SSID:[%s] password:[%s]\n", EXAMPLE_WIFI_SSID, EXAMPLE_WIFI_PASS);
     ESP_ERROR_CHECK( esp_wifi_start() );
 }
 
