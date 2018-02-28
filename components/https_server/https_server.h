@@ -27,6 +27,8 @@ extern "C" {
  * @brief Simple HTTP server
  */
 
+#include "sdkconfig.h"
+
 /* Pull in the definitions of HTTP methods */
 #include "http_parser.h"
 
@@ -65,6 +67,14 @@ typedef struct {
     .task_affinity = tskNO_AFFINITY, \
     .task_stack_size = 4096, \
     .task_priority = 1, \
+}
+
+/** Default initializer for http_server_options_t */
+#define HTTPS_SERVER_OPTIONS_DEFAULT()  {\
+    .port = 443, \
+    .task_affinity = tskNO_AFFINITY, \
+    .task_stack_size = 10240, \
+    .task_priority = 8, \
 }
 
 /**
