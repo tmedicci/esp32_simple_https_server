@@ -756,20 +756,6 @@ static void http_handle_connection(http_server_t server, void *arg_conn)
     int ret=0, len;
 
     /*
-	 * 5. Handshake
-	 */
-	ESP_LOGI(TAG, "  . Performing the SSL/TLS handshake..." );
-	while( ( ret = mbedtls_ssl_handshake( &ctx->ssl_conn ) ) != 0 )
-	{
-		if( ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE )
-		{
-			ESP_LOGI(TAG, "ERROR: bedtls_ssl_handshake returned %d\n\n", ret );
-			//goto reset;
-		}
-	}
-	ESP_LOGI(TAG, "OK");
-
-    /*
 	 * 6. Read the HTTP Request
 	 */
 	buf = malloc(sizeof(char)*MBEDTLS_EXAMPLE_RECV_BUF_LEN);
@@ -865,7 +851,17 @@ static void http_handle_connection(http_server_t server, void *arg_conn)
     ctx->uri = NULL;
     ctx->handler = NULL;
 #ifdef HTTPS_SERVER
-
+	ESP_LOGI(TAG, "Closing the connection..." );
+	while( ( ret = mbedtls_ssl_close_notify( &(ctx->ssl_conn) ) ) < 0 )
+	{
+		if( ret != MBEDTLS_ERR_SSL_WANT_READ &&
+			ret != MBEDTLS_ERR_SSL_WANT_WRITE )
+		{
+			ESP_LOGI(TAG, "ERROR: mbedtls_ssl_close_notify returned %d\n\n", ret );
+//			goto reset;
+		}
+	}
+	ESP_LOGI(TAG, "OK");
 #else
     if (err != ERR_CLSD) {
         netconn_close(conn);
@@ -1017,21 +1013,20 @@ static void http_server(void *arg)
     xEventGroupSetBits(ctx->start_done, SERVER_STARTED_BIT);
 
 reset:
-#ifdef MBEDTLS_ERROR_C
-	if( ret != ERR_OK )
-	{
-		char error_buf[100];
-		mbedtls_strerror( ret, error_buf, 100 );
-		ESP_LOGI(TAG, "Last error was: %d - %s\n\n", ret, error_buf );
-	}
-#endif
-
-	mbedtls_net_free( &(ctx->connection_context.client_fd) );
-
-	mbedtls_ssl_session_reset( &(ctx->connection_context.ssl_conn) );
 
 	do {
+	#ifdef MBEDTLS_ERROR_C
+		if( ret != ERR_OK )
+		{
+			char error_buf[100];
+			mbedtls_strerror( ret, error_buf, 100 );
+			ESP_LOGI(TAG, "Last error was: %d - %s\n\n", ret, error_buf );
+		}
+	#endif
 
+		mbedtls_net_free( &(ctx->connection_context.client_fd) );
+
+		mbedtls_ssl_session_reset( &(ctx->connection_context.ssl_conn) );
 		/*
 		 * 3. Wait until a client connects
 		 */
@@ -1044,20 +1039,25 @@ reset:
 		}
 		mbedtls_ssl_set_bio( &(ctx->connection_context.ssl_conn), &(ctx->connection_context.client_fd), mbedtls_net_send, mbedtls_net_recv, NULL );
 		ESP_LOGD(TAG, "OK");
+
+		/*
+		 * 5. Handshake
+		 */
+		ESP_LOGI(TAG, "  . Performing the SSL/TLS handshake..." );
+		while( ( ret = mbedtls_ssl_handshake( &ctx->connection_context.ssl_conn ) ) != 0 )
+		{
+			if( ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE )
+			{
+				ESP_LOGI(TAG, "ERROR: bedtls_ssl_handshake returned %d\n\n", ret );
+				goto reset;
+			}
+		}
+		ESP_LOGI(TAG, "OK");
+
 		if (ret == ERR_OK) {
 			http_handle_connection(ctx, &(ctx->connection_context.ssl_conn));
-			ESP_LOGI(TAG, "Closing the connection..." );
-			while( ( ret = mbedtls_ssl_close_notify( &(ctx->connection_context.ssl_conn) ) ) < 0 )
-			{
-				if( ret != MBEDTLS_ERR_SSL_WANT_READ &&
-					ret != MBEDTLS_ERR_SSL_WANT_WRITE )
-				{
-					ESP_LOGI(TAG, "ERROR: mbedtls_ssl_close_notify returned %d\n\n", ret );
-					goto reset;
-				}
-			}
-			ESP_LOGI(TAG, "OK");
 		}
+
 	} while (ret == ERR_OK);
 
 exit:
