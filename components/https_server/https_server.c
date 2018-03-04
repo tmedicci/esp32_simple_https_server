@@ -103,6 +103,7 @@ struct http_context_ {
     size_t data_size;
     http_header_list_t request_args;
 #ifdef HTTPS_SERVER
+    mbedtls_ssl_context *ssl_conn;
     mbedtls_net_context *client_fd;
 #else
     struct netconn *conn;
@@ -118,7 +119,6 @@ struct http_server_context_ {
     _lock_t handlers_lock;
     struct http_context_ connection_context;
 #ifdef HTTPS_SERVER
-    mbedtls_ssl_context *ssl_conn;
     mbedtls_net_context *listen_fd;
     mbedtls_entropy_context *entropy;
 	mbedtls_ctr_drbg_context *ctr_drbg;
@@ -575,7 +575,30 @@ static esp_err_t http_send_response_headers(http_context_t http_ctx)
     headers_list_clear(&http_ctx->response_headers);
 
 #ifdef HTTPS_SERVER
-    return ESP_FAIL;
+    int ret;
+    ESP_LOGI(TAG, "Writing response headers..." );
+	//FIXME: check if ret > 0  but less than len
+	while( ( ret = mbedtls_ssl_write( http_ctx->ssl_conn, (const unsigned char *)headers_buf, sizeof(headers_buf) ) ) <= 0 )
+	{
+		if( ret == MBEDTLS_ERR_NET_CONN_RESET )
+		{
+			ESP_LOGE(TAG, "ERROR: peer closed the connection\n\n" );
+			//FIXME: reset connection
+			//goto reset;
+		}
+
+		if( ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE )
+		{
+			ESP_LOGE(TAG, "ERROR: mbedtls_ssl_write returned %d\n\n", ret );
+			//FIXME: close connection
+			//goto exit;
+		}
+	}
+	ESP_LOGI(TAG, "%d bytes written: %s\n", len, (char *)headers_buf);
+    free(headers_buf);
+    http_ctx->state = HTTP_SENDING_RESPONSE_BODY;
+	return ESP_OK;
+
 #else
     err_t err = netconn_write(http_ctx->conn, headers_buf, strlen(headers_buf), NETCONN_COPY);
     free(headers_buf);
@@ -615,18 +638,45 @@ esp_err_t http_response_begin(http_context_t http_ctx, int code, const char* con
 
 esp_err_t http_response_write(http_context_t http_ctx, const http_buffer_t* buffer)
 {
+	size_t len;
+	int ret;
+	esp_err_t err;
     if (http_ctx->state == HTTP_COLLECTING_RESPONSE_HEADERS) {
-        esp_err_t err = http_send_response_headers(http_ctx);
+        err = http_send_response_headers(http_ctx);
         if (err != ESP_OK) {
+        	ESP_LOGE(TAG, "ERROR: in http_send_response_headers function...");
             return err;
         }
     }
-    const int flag = buffer->data_is_persistent ? NETCONN_NOCOPY : NETCONN_COPY;
-    size_t len = buffer->size ? buffer->size : strlen((const char*) buffer->data);
+	len = buffer->size ? buffer->size : strlen((const char*) buffer->data);
 #ifdef HTTPS_SERVER
-    return ESP_FAIL;
+    ESP_LOGI(TAG, "Writing to client:" );
+    //FIXME: check if ret > 0  but less than len
+	while( ( ret = mbedtls_ssl_write( http_ctx->ssl_conn, buffer->data, len ) ) <= 0 )
+	{
+		if( ret == MBEDTLS_ERR_NET_CONN_RESET )
+		{
+			ESP_LOGE(TAG, "ERROR: peer closed the connection\n\n" );
+		    //FIXME: reset connection
+			//goto reset;
+		}
+
+		if( ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE )
+		{
+			ESP_LOGE(TAG, "ERROR: mbedtls_ssl_write returned %d\n\n", ret );
+			//FIXME: close connection
+			//goto exit;
+		}
+	}
+	if(ret==len){
+		http_ctx->accumulated_response_size += len;
+	}
+
+	ESP_LOGI(TAG, "%d bytes written: %s\n", len, (char *)buffer->data);
+	return ret;
 #else
-    err_t rc = netconn_write(http_ctx->conn, buffer->data, len, flag);
+	const int flag = buffer->data_is_persistent ? NETCONN_NOCOPY : NETCONN_COPY;
+	err_t rc = netconn_write(http_ctx->conn, buffer->data, len, flag);
     if (rc != ESP_OK) {
         ESP_LOGD(TAG, "netconn_write rc=%d", rc);
     } else {
@@ -701,12 +751,15 @@ esp_err_t http_response_set_header(http_context_t http_ctx, const char* name, co
 
 static void http_send_not_found_response(http_context_t http_ctx)
 {
-    http_response_begin(http_ctx, 404, "text/plain", HTTP_RESPONSE_SIZE_UNKNOWN);
+	ESP_LOGD(TAG, "Called http_send_not_found_response function!");
+	http_response_begin(http_ctx, 404, "text/plain", HTTP_RESPONSE_SIZE_UNKNOWN);
     const http_buffer_t buf = {
             .data = "Not found",
             .data_is_persistent = true
     };
+	ESP_LOGD(TAG, "Calling http_response_write function...");
     http_response_write(http_ctx, &buf);
+	ESP_LOGD(TAG, "Calling http_response_end function...");
     http_response_end(http_ctx);
 }
 
@@ -740,7 +793,7 @@ static void http_handle_connection(http_server_t server, void *arg_conn)
     /* Initialize context */
     ctx->state = HTTP_PARSING_URI;
 #ifdef HTTPS_SERVER
-    //ctx->ssl_conn = (mbedtls_ssl_context)arg_conn;
+    //ctx->connection_context.ssl_conn = (mbedtls_ssl_context)arg_conn;
 #else
     ctx->conn = (struct netconn)arg_conn;
 #endif
@@ -765,12 +818,12 @@ static void http_handle_connection(http_server_t server, void *arg_conn)
 	 */
 	buf = malloc(sizeof(char)*MBEDTLS_EXAMPLE_RECV_BUF_LEN);
 	while (ctx->state != HTTP_REQUEST_DONE) {
-    	ESP_LOGI(TAG, "  < Read from client:" );
+    	ESP_LOGV(TAG, "Reading from client..." );
     	do
     	{
     		len = sizeof( buf ) - 1;
     		memset( buf, 0, sizeof(char)*MBEDTLS_EXAMPLE_RECV_BUF_LEN);
-    		ret = mbedtls_ssl_read( server->ssl_conn, buf, len );
+    		ret = mbedtls_ssl_read( server->connection_context.ssl_conn, buf, len );
 
     		if( ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE )
     			continue;
@@ -796,7 +849,7 @@ static void http_handle_connection(http_server_t server, void *arg_conn)
     		}
 
     		len = ret;
-    		ESP_LOGI(TAG, " %d bytes read\n\n%s", len, (char *) buf );
+    		ESP_LOGD(TAG, "%d bytes read: %s", len, (char *) buf );
     		if( ret > 0 )
     			break;
     	}
@@ -832,8 +885,11 @@ static void http_handle_connection(http_server_t server, void *arg_conn)
         ctx->state = HTTP_COLLECTING_RESPONSE_HEADERS;
         if (ctx->handler == NULL) {
         	ESP_LOGD(TAG, "Nenhum Handler registrado")
+			http_send_not_found_response(ctx);
+
         } else {
         	ESP_LOGD(TAG, "Handler registrado encontrado!")
+			invoke_handler(ctx, HTTP_HANDLE_RESPONSE);
         }
     }
     ESP_LOGD(TAG, "ERRO de return!, ret = %d", ret)
@@ -857,7 +913,7 @@ static void http_handle_connection(http_server_t server, void *arg_conn)
     ctx->handler = NULL;
 #ifdef HTTPS_SERVER
 	ESP_LOGI(TAG, "Closing the connection..." );
-	while( ( ret = mbedtls_ssl_close_notify( server->ssl_conn) ) < 0 )
+	while( ( ret = mbedtls_ssl_close_notify( server->connection_context.ssl_conn) ) < 0 )
 	{
 		if( ret != MBEDTLS_ERR_SSL_WANT_READ &&
 			ret != MBEDTLS_ERR_SSL_WANT_WRITE )
@@ -898,7 +954,7 @@ static void http_server(void *arg)
 	(ctx->listen_fd) = &listen_fd;
 	(ctx->entropy) = &entropy;
 	(ctx->ctr_drbg) = &ctr_drbg;
-	(ctx->ssl_conn) = &ssl_conn;
+	(ctx->connection_context.ssl_conn) = &ssl_conn;
 	(ctx->conf) = &conf;
 	(ctx->srvcert) = &srvcert;
 	(ctx->pkey) = &pkey;
@@ -912,15 +968,15 @@ static void http_server(void *arg)
 	extern const unsigned char prvtkey_pem_end[]   asm("_binary_prvtkey_pem_end");
 	const unsigned int prvtkey_pem_bytes = prvtkey_pem_end - prvtkey_pem_start;
 
-    ESP_LOGI(TAG, "Server context create ......");
+    ESP_LOGI(TAG, "Setting mbedTLS context......");
     mbedtls_net_init( ctx->listen_fd );
     ESP_LOGD(TAG, "OK");
 
-    ESP_LOGI(TAG, "SSL server context create ......");
-    mbedtls_ssl_init( ctx->ssl_conn );
+    ESP_LOGD(TAG, "SSL server context create ......");
+    mbedtls_ssl_init( ctx->connection_context.ssl_conn );
     ESP_LOGD(TAG, "OK");
 
-    ESP_LOGI(TAG, "SSL conf context create ......");
+    ESP_LOGD(TAG, "SSL conf context create ......");
     mbedtls_ssl_config_init( ctx->conf );
     ESP_LOGD(TAG, "OK");
 
@@ -935,7 +991,7 @@ static void http_server(void *arg)
     /*
 	 * 1. Load the certificates and private RSA key
 	 */
-    ESP_LOGD(TAG, "1. Loading the server cert. and key..." );
+    ESP_LOGD(TAG, "Loading the server cert. and key..." );
 	/*
 	 * This demonstration program uses embedded test certificates.
 	 * Instead, you may want to use mbedtls_x509_crt_parse_file() to read the
@@ -943,7 +999,7 @@ static void http_server(void *arg)
 	 */
     ESP_LOGD(TAG, "SSL server context set own certification......");
     ESP_LOGD(TAG, "Parsing test srv_crt......");
-	ret = mbedtls_x509_crt_parse( &srvcert, (const unsigned char *) cacert_pem_start,
+	ret = mbedtls_x509_crt_parse( ctx->srvcert, (const unsigned char *) cacert_pem_start,
 						cacert_pem_bytes );
 	if( ret != ERR_OK )
 	{
@@ -953,7 +1009,7 @@ static void http_server(void *arg)
 	ESP_LOGD(TAG, "OK");
 
 	ESP_LOGD(TAG, "SSL server context set private key......");
-	ret =  mbedtls_pk_parse_key( &pkey, (const unsigned char *) prvtkey_pem_start,
+	ret =  mbedtls_pk_parse_key( ctx->pkey, (const unsigned char *) prvtkey_pem_start,
 							prvtkey_pem_bytes, NULL, 0 );
 	if( ret != ERR_OK )
 	{
@@ -965,8 +1021,8 @@ static void http_server(void *arg)
 	/*
 	 * 3. Seed the RNG
 	 */
-	ESP_LOGD(TAG, "3. Seeding the random number generator..." );
-	if( ( ret = mbedtls_ctr_drbg_seed( &ctr_drbg, mbedtls_entropy_func, &entropy,
+	ESP_LOGD(TAG, "Seeding the random number generator..." );
+	if( ( ret = mbedtls_ctr_drbg_seed( ctx->ctr_drbg, mbedtls_entropy_func, ctx->entropy,
 							   (const unsigned char *) TAG,
 							   strlen( TAG ) ) ) != 0 )
 	{
@@ -979,23 +1035,23 @@ static void http_server(void *arg)
 	 * 2. Setup the listening TCP socket
 	 */
 	char port[10];
-	ESP_LOGD(TAG, "2. SSL server socket bind at localhost:%d ......", ctx->port);
+	ESP_LOGD(TAG, "SSL server socket bind at localhost:%d ......", ctx->port);
 	if( ( ret = mbedtls_net_bind( ctx->listen_fd, NULL, itoa(ctx->port, port,10), MBEDTLS_NET_PROTO_TCP ) ) != 0 )
 	{
 		ESP_LOGE(TAG, "ERROR: mbedtls_net_bind returned %d\n\n", ret );
 		goto exit;
 	}
-	ESP_LOGI(TAG, "OK");
+	ESP_LOGD(TAG, "OK");
 
 
     /*
      * 4. Setup stuff
      */
-	ESP_LOGI(TAG, "4. Setting up the SSL data...." );
+	ESP_LOGD(TAG, "Setting up the SSL conf data...." );
 #ifdef CONFIG_MBEDTLS_DEBUG
-    mbedtls_esp_enable_debug_log(&conf, 4);
+    mbedtls_esp_enable_debug_log(ctx->conf, 4);
 #endif
-    if( ( ret = mbedtls_ssl_config_defaults( &conf,
+    if( ( ret = mbedtls_ssl_config_defaults( ctx->conf,
                     MBEDTLS_SSL_IS_SERVER,
                     MBEDTLS_SSL_TRANSPORT_STREAM,
                     MBEDTLS_SSL_PRESET_DEFAULT ) ) != 0 )
@@ -1004,24 +1060,24 @@ static void http_server(void *arg)
         goto exit;
     }
 
-    mbedtls_ssl_conf_rng( &conf, mbedtls_ctr_drbg_random, &ctr_drbg );
+    mbedtls_ssl_conf_rng( ctx->conf, mbedtls_ctr_drbg_random, ctx->ctr_drbg );
 
 #if defined(MBEDTLS_SSL_CACHE_C)
-    mbedtls_ssl_conf_session_cache( &conf, &cache,
+    mbedtls_ssl_conf_session_cache( ctx->conf, ctx->cache,
                                    mbedtls_ssl_cache_get,
                                    mbedtls_ssl_cache_set );
 #endif
 
-    mbedtls_ssl_conf_ca_chain( &conf, srvcert.next, NULL );
-    if( ( ret = mbedtls_ssl_conf_own_cert( &conf, &srvcert, &pkey ) ) != 0 )
+    mbedtls_ssl_conf_ca_chain( ctx->conf, (*ctx->srvcert).next, NULL );
+    if( ( ret = mbedtls_ssl_conf_own_cert( ctx->conf, ctx->srvcert, ctx->pkey ) ) != 0 )
     {
     	ESP_LOGE(TAG, "ERROR: mbedtls_ssl_conf_own_cert returned %d\n\n", ret );
         goto exit;
     }
 
-    if( ( ret = mbedtls_ssl_setup( ctx->ssl_conn, &conf ) ) != 0 )
+    if( ( ret = mbedtls_ssl_setup( ctx->connection_context.ssl_conn, ctx->conf ) ) != 0 )
     {
-    	ESP_LOGI(TAG, "ERROR: mbedtls_ssl_setup returned %d\n\n", ret );
+    	ESP_LOGE(TAG, "ERROR: mbedtls_ssl_setup returned %d\n\n", ret );
         goto exit;
     }
 	ESP_LOGD(TAG, "OK");
@@ -1029,7 +1085,7 @@ static void http_server(void *arg)
     xEventGroupSetBits(ctx->start_done, SERVER_STARTED_BIT);
 
 reset:
-
+	ESP_LOGI(TAG, "mbedTLS HTTPS server is running! Waiting for new connection...");
 	do {
 	    mbedtls_net_context client_fd;
 		(ctx->connection_context.client_fd) = &client_fd;
@@ -1038,44 +1094,45 @@ reset:
 		{
 			char error_buf[100];
 			mbedtls_strerror( ret, error_buf, 100 );
-			ESP_LOGI(TAG, "Last error was: %d - %s\n\n", ret, error_buf );
+			ESP_LOGE(TAG, "Last error was: %d - %s\n\n", ret, error_buf );
 		}
 	#endif
 
 		mbedtls_net_free( ctx->connection_context.client_fd );
 
-		mbedtls_ssl_session_reset( ctx->ssl_conn );
+		mbedtls_ssl_session_reset( ctx->connection_context.ssl_conn );
 		/*
 		 * 3. Wait until a client connects
 		 */
-		ESP_LOGI(TAG, "Waiting for a remote connection ..." );
+		ESP_LOGD(TAG, "Wait until a client connects..." );
 		if( ( ret = mbedtls_net_accept( ctx->listen_fd, ctx->connection_context.client_fd,
 										NULL, 0, NULL ) ) != 0 )
 		{
 			ESP_LOGE(TAG, "ERROR: mbedtls_net_accept returned %d\n\n", ret );
 			goto exit;
 		}
-		mbedtls_ssl_set_bio( ctx->ssl_conn, ctx->connection_context.client_fd, mbedtls_net_send, mbedtls_net_recv, NULL );
+		mbedtls_ssl_set_bio( ctx->connection_context.ssl_conn, ctx->connection_context.client_fd, mbedtls_net_send, mbedtls_net_recv, NULL );
 		ESP_LOGD(TAG, "OK");
 
 		/*
 		 * 5. Handshake
 		 */
-		ESP_LOGI(TAG, "  . Performing the SSL/TLS handshake..." );
-		while( ( ret = mbedtls_ssl_handshake( ctx->ssl_conn ) ) != 0 )
+		ESP_LOGD(TAG, "Performing the SSL/TLS handshake..." );
+		while( ( ret = mbedtls_ssl_handshake( ctx->connection_context.ssl_conn ) ) != 0 )
 		{
 			if( ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE )
 			{
-				ESP_LOGI(TAG, "ERROR: bedtls_ssl_handshake returned %d\n\n", ret );
+				ESP_LOGE(TAG, "ERROR: bedtls_ssl_handshake returned %d\n\n", ret );
 				goto reset;
 			}
 		}
-		ESP_LOGI(TAG, "OK");
+		ESP_LOGD(TAG, "OK");
 
+		ESP_LOGD(TAG, "Handling connection..." );
 		if (ret == ERR_OK) {
 			http_handle_connection(ctx, NULL);
 		}
-
+		ESP_LOGD(TAG, "OK");
 	} while (ret == ERR_OK);
 
 exit:
@@ -1089,10 +1146,9 @@ if (ret != ERR_OK) {
 
 	mbedtls_net_free( ctx->connection_context.client_fd );
 	mbedtls_net_free( ctx->listen_fd );
-
 	mbedtls_x509_crt_free( ctx->srvcert );
 	mbedtls_pk_free( ctx->pkey );
-	mbedtls_ssl_free( ctx->ssl_conn );
+	mbedtls_ssl_free( ctx->connection_context.ssl_conn );
 	mbedtls_ssl_config_free( ctx->conf );
 #if defined(MBEDTLS_SSL_CACHE_C)
 	mbedtls_ssl_cache_free( ctx->cache );
@@ -1207,13 +1263,7 @@ esp_err_t http_server_stop(http_server_t server)
     free(server);
     return ESP_OK;
 }
-#ifdef HTTPS_SERVER
-static void cb_GET_method(http_context_t http_ctx, void* ctx)
-{
-    ESP_LOGI(TAG, "Respondeu a callback!");
-}
 
-#else
 static void cb_GET_method(http_context_t http_ctx, void* ctx)
 {
     size_t response_size = strlen(index_html);
@@ -1222,7 +1272,6 @@ static void cb_GET_method(http_context_t http_ctx, void* ctx)
     http_response_write(http_ctx, &http_index_html);
     http_response_end(http_ctx);
 }
-#endif
 
 esp_err_t simple_GET_method_example(void)
 {
