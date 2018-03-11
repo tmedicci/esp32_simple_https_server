@@ -576,10 +576,18 @@ static esp_err_t http_send_response_headers(http_context_t http_ctx)
 
 #ifdef HTTPS_SERVER
     int ret;
+    int actual_len;
     ESP_LOGI(TAG, "Writing response headers..." );
-	//FIXME: check if ret > 0  but less than len
-	while( ( ret = mbedtls_ssl_write( http_ctx->ssl_conn, (const unsigned char *)headers_buf, sizeof(headers_buf) ) ) <= 0 )
+
+    len = strlen(headers_buf);
+    actual_len = 0;
+    ret = 0;
+	do
 	{
+		len = len - ret;
+		ESP_LOGD(TAG, "len = %d", len);
+		ret = mbedtls_ssl_write( http_ctx->ssl_conn, ((const unsigned char *)headers_buf + ret), len);
+		ESP_LOGD(TAG, "ret = %d", ret);
 		if( ret == MBEDTLS_ERR_NET_CONN_RESET )
 		{
 			ESP_LOGE(TAG, "ERROR: peer closed the connection\n\n" );
@@ -587,18 +595,22 @@ static esp_err_t http_send_response_headers(http_context_t http_ctx)
 			//goto reset;
 		}
 
-		if( ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE )
+		if( ret < 0 && ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE )
 		{
 			ESP_LOGE(TAG, "ERROR: mbedtls_ssl_write returned %d\n\n", ret );
 			//FIXME: close connection
 			//goto exit;
 		}
-	}
-	ESP_LOGI(TAG, "%d bytes written: %s\n", len, (char *)headers_buf);
+		if (ret > 0)
+			actual_len += ret;
+		ESP_LOGD(TAG, "actual_len = %d", actual_len );
+	}while( ret < 0 || ret < len );
+
+	ESP_LOGI(TAG, "%d bytes written:\n%s", actual_len, (char *)headers_buf);
     free(headers_buf);
     http_ctx->state = HTTP_SENDING_RESPONSE_BODY;
+	//FIXME: check return code from mbedTLS
 	return ESP_OK;
-
 #else
     err_t err = netconn_write(http_ctx->conn, headers_buf, strlen(headers_buf), NETCONN_COPY);
     free(headers_buf);
@@ -651,9 +663,11 @@ esp_err_t http_response_write(http_context_t http_ctx, const http_buffer_t* buff
 	len = buffer->size ? buffer->size : strlen((const char*) buffer->data);
 #ifdef HTTPS_SERVER
     ESP_LOGI(TAG, "Writing to client:" );
-    //FIXME: check if ret > 0  but less than len
-	while( ( ret = mbedtls_ssl_write( http_ctx->ssl_conn, buffer->data, len ) ) <= 0 )
+    ret = 0;
+    do
 	{
+    	len = len - ret;
+    	ret = mbedtls_ssl_write( http_ctx->ssl_conn, (buffer->data + ret), len);
 		if( ret == MBEDTLS_ERR_NET_CONN_RESET )
 		{
 			ESP_LOGE(TAG, "ERROR: peer closed the connection\n\n" );
@@ -661,18 +675,17 @@ esp_err_t http_response_write(http_context_t http_ctx, const http_buffer_t* buff
 			//goto reset;
 		}
 
-		if( ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE )
+		if( ret < 0 && ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE )
 		{
 			ESP_LOGE(TAG, "ERROR: mbedtls_ssl_write returned %d\n\n", ret );
 			//FIXME: close connection
 			//goto exit;
 		}
-	}
-	if(ret==len){
-		http_ctx->accumulated_response_size += len;
-	}
+		if (ret > 0)
+			http_ctx->accumulated_response_size += ret;
+	}while( ret < 0 || ret < len );
 
-	ESP_LOGI(TAG, "%d bytes written: %s\n", len, (char *)buffer->data);
+	ESP_LOGI(TAG, "%d bytes written:\n%s", http_ctx->accumulated_response_size, (char *)buffer->data);
 	return ret;
 #else
 	const int flag = buffer->data_is_persistent ? NETCONN_NOCOPY : NETCONN_COPY;
