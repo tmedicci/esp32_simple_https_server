@@ -40,6 +40,10 @@ extern "C" {
 #define HTTP_HANDLE_DATA        BIT(2)      /*!< Called each time a fragment of request body is received */
 #define HTTP_HANDLE_RESPONSE    BIT(3)      /*!< Called at the end of the request to produce the response */
 
+/** Error buffer length */
+#define ERROR_BUF_LENGTH 		100
+
+/** Defined to enable secured server */
 #define HTTPS_SERVER
 
 /** Opaque type representing single HTTP connection */
