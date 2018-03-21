@@ -1038,13 +1038,14 @@ static void http_server(void *arg)
 	/*
 	 * 2. Setup the listening TCP socket
 	 */
-	char port[6];
-	ESP_LOGV(TAG, "SSL server socket bind at localhost: %d ......", ctx->port);
-	if( ( ret = mbedtls_net_bind( ctx->listen_fd, NULL, itoa(ctx->port, port,6), MBEDTLS_NET_PROTO_TCP ) ) != 0 )
+	char *port = malloc(sizeof(char) * 6);
+	ESP_LOGV(TAG, "SSL server socket bind at localhost: %s ......", itoa(ctx->port, port,10));
+	if( ( ret = mbedtls_net_bind( ctx->listen_fd, NULL, itoa(ctx->port, port,10), MBEDTLS_NET_PROTO_TCP ) ) != 0 )
 	{
 		ESP_LOGE(TAG, "ERROR: mbedtls_net_bind returned %d", ret );
 		goto exit;
 	}
+	free(port);
 	ESP_LOGV(TAG, "OK");
 
 
@@ -1093,6 +1094,8 @@ reset:
 	do {
 	    mbedtls_net_context client_fd;
 		(ctx->connection_context.client_fd) = &client_fd;
+	    mbedtls_net_init( ctx->connection_context.client_fd );
+
 #ifdef MBEDTLS_ERROR_C
 		if( ret != ERR_OK )
 		{
