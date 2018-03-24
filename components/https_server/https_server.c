@@ -224,7 +224,7 @@ static void header_value_done(http_context_t ctx)
 {
     const char* value = ctx->parse_buffer;
     const char* name = ctx->request_header_tmp;
-    ESP_LOGD(TAG, "Got header: '%s': '%s'", name, value);
+    ESP_LOGI(TAG, "Got header: '%s': '%s'", name, value);
     add_keyval_pair(&ctx->request_headers, name, value);
     free(ctx->request_header_tmp);
     ctx->request_header_tmp = NULL;
@@ -233,7 +233,7 @@ static void header_value_done(http_context_t ctx)
 
 static int http_url_cb(http_parser* parser, const char *at, size_t length)
 {
-	ESP_LOGV(TAG, "Called http_url_cb!");
+    ESP_LOGD(TAG, "Called %s", __func__);
     http_context_t ctx = (http_context_t) parser->data;
     return append_parse_buffer(ctx, at, length);
 }
@@ -252,7 +252,7 @@ static bool invoke_handler(http_context_t ctx, int event)
 
 static int http_headers_done_cb(http_parser* parser)
 {
-	ESP_LOGV(TAG, "Called http_headers_done_cb!");
+    ESP_LOGD(TAG, "Called %s", __func__);
     http_context_t ctx = (http_context_t) parser->data;
     if (ctx->state == HTTP_PARSING_HEADER_VALUE) {
         header_value_done(ctx);
@@ -323,7 +323,7 @@ static void parse_urlencoded_args(http_context_t ctx, const char* str, size_t le
             value = urldecode(token_start, pos - token_start);
             state = READING_KEY;
             token_start = pos + 1;
-            ESP_LOGD(TAG, "Got request argument, '%s': '%s'", key, value);
+            ESP_LOGI(TAG, "Got request argument, '%s': '%s'", key, value);
             add_keyval_pair(&ctx->request_args, key, value);
             free(key);
             key = NULL;
@@ -333,7 +333,7 @@ static void parse_urlencoded_args(http_context_t ctx, const char* str, size_t le
     }
     if (state == READING_VAL) {
         value = urldecode(token_start, end - token_start);
-        ESP_LOGD(TAG, "Got request argument, '%s': '%s'", key, value);
+        ESP_LOGI(TAG, "Got request argument, '%s': '%s'", key, value);
         add_keyval_pair(&ctx->request_args, key, value);
         free(key);
         key = NULL;
@@ -351,7 +351,7 @@ static void uri_done(http_context_t ctx)
         ++query_str;
     }
     ctx->uri = strdup(ctx->parse_buffer);
-    ESP_LOGD(TAG, "Got URI: '%s'", ctx->uri);
+    ESP_LOGI(TAG, "Got URI: '%s'", ctx->uri);
     if (query_str) {
         parse_urlencoded_args(ctx, query_str, strlen(query_str));
     }
@@ -364,8 +364,7 @@ static void uri_done(http_context_t ctx)
 
 static int http_header_name_cb(http_parser* parser, const char *at, size_t length)
 {
-	ESP_LOGV(TAG, "Called http_header_name_cb!");
-    ESP_LOGV(TAG, "%s", __func__);
+    ESP_LOGD(TAG, "Called %s", __func__);
     http_context_t ctx = (http_context_t) parser->data;
     if (ctx->state == HTTP_PARSING_URI) {
         uri_done(ctx);
@@ -379,9 +378,7 @@ static int http_header_name_cb(http_parser* parser, const char *at, size_t lengt
 
 static int http_header_value_cb(http_parser* parser, const char *at, size_t length)
 {
-	ESP_LOGV(TAG, "Called http_header_value_cb!");
-
-    ESP_LOGV(TAG, "%s", __func__);
+    ESP_LOGD(TAG, "Called %s", __func__);
     http_context_t ctx = (http_context_t) parser->data;
     if (ctx->state == HTTP_PARSING_HEADER_NAME) {
         header_name_done(ctx);
@@ -392,9 +389,7 @@ static int http_header_value_cb(http_parser* parser, const char *at, size_t leng
 
 static int http_body_cb(http_parser* parser, const char *at, size_t length)
 {
-	ESP_LOGV(TAG, "Called http_body_cb!");
-
-    ESP_LOGV(TAG, "%s", __func__);
+    ESP_LOGD(TAG, "Called %s", __func__);
     http_context_t ctx = (http_context_t) parser->data;
     ctx->data_ptr = at;
     ctx->data_size = length;
@@ -406,8 +401,7 @@ static int http_body_cb(http_parser* parser, const char *at, size_t length)
 
 static int http_message_done_cb(http_parser* parser)
 {
-	ESP_LOGV(TAG, "Called http_message_done_cb!");
-    ESP_LOGV(TAG, "%s", __func__);
+    ESP_LOGD(TAG, "Called %s", __func__);
     http_context_t ctx = (http_context_t) parser->data;
     ctx->state = HTTP_REQUEST_DONE;
     return 0;
@@ -443,7 +437,7 @@ const char* http_request_get_arg_value(http_context_t ctx, const char* name)
 {
     http_header_t* it;
     SLIST_FOREACH(it, &ctx->request_args, list_entry) {
-        ESP_LOGD(TAG, "Key %s: %s", it->name, it->value);
+        ESP_LOGI(TAG, "Key %s: %s", it->name, it->value);
         if (strcasecmp(name, it->name) == 0) {
             return it->value;
         }
@@ -584,9 +578,7 @@ static esp_err_t http_send_response_headers(http_context_t http_ctx)
 	do
 	{
 		len = len - ret;
-		ESP_LOGD(TAG, "len = %d", len);
 		ret = mbedtls_ssl_write( http_ctx->ssl_conn, ((const unsigned char *)headers_buf + ret), len);
-		ESP_LOGD(TAG, "ret = %d", ret);
 		if( ret == MBEDTLS_ERR_NET_CONN_RESET )
 		{
 			ESP_LOGE(TAG, "ERROR: peer closed the connection\n\n" );
@@ -602,7 +594,6 @@ static esp_err_t http_send_response_headers(http_context_t http_ctx)
 		}
 		if (ret > 0)
 			actual_len += ret;
-		ESP_LOGD(TAG, "actual_len = %d", actual_len );
 	}while( ret < 0 || ret < len );
 
 	ESP_LOGI(TAG, "%d bytes written:\n%s", actual_len, (char *)headers_buf);
@@ -684,7 +675,7 @@ esp_err_t http_response_write(http_context_t http_ctx, const http_buffer_t* buff
 			http_ctx->accumulated_response_size += ret;
 	}while( ret < 0 || ret < len );
 
-	ESP_LOGI(TAG, "%d bytes written:\n%s", http_ctx->accumulated_response_size, (char *)buffer->data);
+	ESP_LOGI(TAG, "%d bytes written:%s", http_ctx->accumulated_response_size, (char *)buffer->data);
 	return ret;
 #else
 	const int flag = buffer->data_is_persistent ? NETCONN_NOCOPY : NETCONN_COPY;
@@ -763,7 +754,7 @@ esp_err_t http_response_set_header(http_context_t http_ctx, const char* name, co
 
 static void http_send_not_found_response(http_context_t http_ctx)
 {
-	ESP_LOGD(TAG, "Called http_send_not_found_response function!");
+    ESP_LOGD(TAG, "Called %s", __func__);
 	http_response_begin(http_ctx, 404, "text/plain", HTTP_RESPONSE_SIZE_UNKNOWN);
     const http_buffer_t buf = {
             .data = "Not found",
@@ -821,17 +812,19 @@ static void http_handle_connection(http_server_t server, void *arg_conn)
     };
 
 #ifdef HTTPS_SERVER
-    int ret=0, len;
+    int ret;
+    size_t parsed_bytes = 0;
     /*
 	 * 6. Read the HTTP Request
 	 */
-	buf = malloc(sizeof(char)*MBEDTLS_EXAMPLE_RECV_BUF_LEN);
+
+	ret = 0;
 	while (ctx->state != HTTP_REQUEST_DONE) {
     	ESP_LOGV(TAG, "Reading from client..." );
-
-		len = sizeof( buf ) - 1;
+		buf = malloc(sizeof(char)*MBEDTLS_EXAMPLE_RECV_BUF_LEN);
 		memset( buf, 0, sizeof(char)*MBEDTLS_EXAMPLE_RECV_BUF_LEN);
-		ret = mbedtls_ssl_read( server->connection_context.ssl_conn, buf, (sizeof( buf ) - 1) );
+		//FIXME: add support for buffer > MBEDTLS_EXAMPLE_RECV_BUF_LEN
+		ret = mbedtls_ssl_read( server->connection_context.ssl_conn, buf, MBEDTLS_EXAMPLE_RECV_BUF_LEN);
 
 		if( ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE )
 			continue;
@@ -856,14 +849,12 @@ static void http_handle_connection(http_server_t server, void *arg_conn)
 			break;
 		}
 
-		ESP_LOGD(TAG, "%d bytes read: %s", ret, (char *) buf );
+		ESP_LOGD(TAG, "%d bytes read: \n%s", ret, (char *) buf );
 
-		size_t parsed_bytes = http_parser_execute(&ctx->parser, &parser_settings, (char *)buf, ret);
-		if (parsed_bytes < len) {
-			break;
-		}
+    	ESP_LOGI(TAG, "Calling http_parser_execute...");
+		parsed_bytes = http_parser_execute(&ctx->parser, &parser_settings, (char *)buf, ret);
 	}
-	ESP_LOGD(TAG, "Read looping return: %d", ret);
+	ESP_LOGD(TAG, "Read looping return: %d", parsed_bytes);
 
 #else //HTPPS SERVER OFF
 	while (ctx->state != HTTP_REQUEST_DONE) {
@@ -900,8 +891,10 @@ static void http_handle_connection(http_server_t server, void *arg_conn)
     if (err == ERR_OK) {
 		ctx->state = HTTP_COLLECTING_RESPONSE_HEADERS;
 		if (ctx->handler == NULL) {
+        	ESP_LOGD(TAG, "No registered Handler!")
 			http_send_not_found_response(ctx);
 		} else {
+        	ESP_LOGD(TAG, "Registered Handler Found!")
 			invoke_handler(ctx, HTTP_HANDLE_RESPONSE);
 		}
 	}
@@ -921,7 +914,9 @@ static void http_handle_connection(http_server_t server, void *arg_conn)
 			ret != MBEDTLS_ERR_SSL_WANT_WRITE )
 		{
 			ESP_LOGI(TAG, "ERROR: mbedtls_ssl_close_notify returned %d\n\n", ret );
-//			goto reset;
+			break;
+			//FIXME: Reset connection
+			//goto reset;
 		}
 	}
 	ESP_LOGI(TAG, "OK");
@@ -1293,14 +1288,14 @@ esp_err_t simple_GET_method_example(void)
 	if (res != ESP_OK) {
 		return res;
 	}
-	ESP_LOGI(TAG, "OK");
+	ESP_LOGV(TAG, "OK");
 
 	ESP_LOGI(TAG, "Registering Handler!");
 	ESP_ERROR_CHECK( res = http_register_handler(server, "/", HTTP_GET, HTTP_HANDLE_RESPONSE, &cb_GET_method, NULL) );
 	if (res != ESP_OK) {
 		return res;
 	}
-	ESP_LOGI(TAG, "OK");
+	ESP_LOGV(TAG, "OK");
 
 	return res;
 }

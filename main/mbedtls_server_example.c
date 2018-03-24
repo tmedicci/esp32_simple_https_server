@@ -411,9 +411,8 @@ static esp_err_t wifi_event_handler(void *ctx, system_event_t *event)
         break;
     case SYSTEM_EVENT_STA_GOT_IP:
         xEventGroupSetBits(wifi_event_group, CONNECTED_BIT);
-        //mbedtls_server_init();
         /*Creating a GET method example*/
-		ESP_ERROR_CHECK( simple_GET_method_example() );
+		ESP_ERROR_CHECK( simple_POST_method_example() );
         break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
         /* This is a workaround as ESP32 WiFi libs don't currently
