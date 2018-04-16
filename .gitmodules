@@ -1,0 +1,3 @@
+[submodule "components/esp32-http-server"]
+	path = components/esp32-http-server
+	url = https://github.com/tmedicci/esp32-http-server
